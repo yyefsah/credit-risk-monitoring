@@ -1,0 +1,166 @@
+---
+title: "Pilotage du risque de crédit — portefeuille de prêts d'une banque de détail"
+output:
+  html_document:
+    self_contained: true
+    toc: true
+    toc_depth: 2
+    theme: null
+    highlight: null
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+suppressPackageStartupMessages({ library(plotly); library(dplyr); library(tidyr); library(knitr) })
+Sys.setlocale("LC_ALL", "C.UTF-8")
+root <- Sys.getenv("PROJECT_ROOT", unset = normalizePath(file.path(getwd(), "..")))
+if (!file.exists(file.path(root, "outputs/cache/marts.rds"))) root <- getwd()
+marts <- readRDS(file.path(root, "outputs/cache/marts.rds")); m <- readRDS(file.path(root, "outputs/cache/model.rds"))
+PAL <- c(blue = "#2a78d6", orange = "#eb6834", aqua = "#1baf7a", yellow = "#eda100", magenta = "#e87ba4", green = "#008300")
+INK <- "#0b0b0b"; INK2 <- "#52514e"; SURF <- "#fcfcfb"; GRID <- "#e6e5e1"
+pl <- function(p, ...) p %>% layout(paper_bgcolor = SURF, plot_bgcolor = SURF, font = list(color = INK2, size = 13),
+        legend = list(orientation = "h", x = 0, xanchor = "left", y = 1.12), margin = list(l = 70, r = 30, t = 40, b = 60), hoverlabel = list(font = list(size = 13)), ...) %>%
+        config(displaylogo = FALSE, modeBarButtonsToRemove = c("select2d", "lasso2d"))
+ax <- function(title = "", ...) list(title = list(text = title), gridcolor = GRID, zerolinecolor = GRID, linecolor = GRID, ...)
+d <- m$d; pm <- marts$portfolio_monthly; last <- pm[nrow(pm), ]; perf <- m$perf; pol_ref <- m$policy_te[m$policy_te$is_reference, ]
+tile <- function(label, value, note = "") sprintf('<div class="tile"><div class="tl">%s</div><div class="tv">%s</div><div class="tn">%s</div></div>', label, value, note)
+fm <- function(x, d = 1) formatC(x, format = "f", digits = d, big.mark = " ", decimal.mark = ",")
+```
+
+<style>
+body { font-family: -apple-system, "Segoe UI", Inter, Helvetica, Arial, sans-serif; color: #0b0b0b; background: #fcfcfb; max-width: 1100px; margin: 0 auto; padding: 16px 24px 60px; line-height: 1.5; }
+h1.title { font-size: 26px; margin-bottom: 4px; } h2 { margin-top: 36px; border-bottom: 1px solid #e6e5e1; padding-bottom: 4px; }
+.tiles { display: flex; flex-wrap: wrap; gap: 12px; margin: 14px 0 6px; } .tile { flex: 1 1 170px; border: 1px solid #e6e5e1; border-radius: 8px; padding: 10px 14px; background: #fff; }
+.tl { font-size: 12px; color: #52514e; } .tv { font-size: 26px; font-weight: 700; } .tn { font-size: 11px; color: #52514e; }
+.lead { color: #52514e; } .warn { border-left: 4px solid #eb6834; background: #fff; padding: 8px 14px; margin: 14px 0; }
+table { border-collapse: collapse; font-size: 13px; } th, td { border-bottom: 1px solid #e6e5e1; padding: 4px 10px; text-align: left; } th { background: #1F3A5F; color: #fff; }
+details { margin: 6px 0 16px; } summary { cursor: pointer; color: #52514e; font-size: 13px; }
+#TOC { font-size: 13px; } .list-group-item { border: none; }
+</style>
+
+<p class="lead">682 prêts d'une banque de détail tchèque (1993-1998, données réelles anonymisées, PKDD'99). Chaîne complète : PostgreSQL (nettoyage, contrôles qualité, indicateurs) → R (score d'octroi, validation temporelle) → ce tableau de bord, un classeur Excel et des tables prêtes pour Power BI.</p>
+
+```{r tiles, results='asis'}
+cat('<div class="tiles">',
+  tile("Prêts / défaillants", sprintf("%d / %d", nrow(d), sum(d$is_bad)), sprintf("taux de défaut %s %%", fm(100 * mean(d$is_bad)))),
+  tile(paste("Encours estimé", format(last$month_end, "%m/%Y")), sprintf("%s M CZK", fm(last$outstanding_czk / 1e6)), "amortissement linéaire (hypothèse)"),
+  tile("Part de l'encours en défaut", sprintf("%s %%", fm(100 * last$npl_ratio)), format(last$month_end, "fin %m/%Y")),
+  tile("Coût du risque proxy (12 mois)", sprintf("%s %%", fm(100 * last$cost_of_risk_12m_proxy)), "LGD 45 % supposée"),
+  tile("AUC du score (1997)", sprintf("%s", fm(perf$auc[1], 2)), sprintf("IC 95 %% [%s ; %s], %d défauts", fm(perf$auc_lo[1], 2), fm(perf$auc_hi[1], 2), m$bad_test)), '</div>', sep = "\n")
+```
+
+<div class="warn"><b>À lire avant les chiffres.</b> Le « défaut » est un proxy : dans cette base, un prêt est défaillant (statut B/D) si et seulement si le compte a été à découvert au moins une fois. La performance du score est donc probablement meilleure que sur un vrai défaut de paiement, et la cohorte 1998 (moins de 12 mois d'observation) est trop récente pour être jugée.</div>
+
+## 1. Évolution du portefeuille
+
+```{r portfolio, fig.height=7.2}
+p <- pm %>% filter(month_end >= as.Date("1993-12-31"))
+mk <- function(y, nm, fmt, col = PAL[["blue"]]) plot_ly(p, x = ~month_end, y = y, type = "scatter", mode = "lines", line = list(color = col, width = 2.2), name = nm,
+        hovertemplate = paste0("%{x|%b %Y}<br>", nm, " : %{y", fmt, "}<extra></extra>"), showlegend = FALSE) %>% layout(yaxis = ax(nm), xaxis = ax())
+subplot(mk(p$outstanding_czk / 1e6, "Encours (M CZK)", ":.1f"), mk(100 * p$npl_ratio, "Part en défaut (%)", ":.1f"), mk(100 * p$cost_of_risk_12m_proxy, "Coût du risque proxy 12 m (%)", ":.1f"),
+        nrows = 3, shareX = TRUE, titleY = TRUE, margin = 0.04) %>% pl()
+```
+
+Trois unités, trois panneaux : aucun double axe. Le coût du risque est la somme des expositions des nouveaux défauts sur 12 mois × LGD supposée, rapportée à l'encours moyen.
+
+## 2. Cohortes d'octroi
+
+```{r vintage}
+v <- marts$vintage %>% filter(n_at_risk >= 15) %>% mutate(vintage = ifelse(vintage_year == 1998, "1998 (immature)", as.character(vintage_year)))
+cols <- setNames(unname(PAL[1:6]), c("1993", "1994", "1995", "1996", "1997", "1998 (immature)"))
+pv <- plot_ly()
+for (nm_v in names(cols)) { g <- v %>% filter(vintage == nm_v); if (!nrow(g)) next
+  pv <- add_trace(pv, data = g, x = ~months_on_book, y = ~100 * cum_default_rate, type = "scatter", mode = "lines+markers", name = nm_v,
+                  line = list(color = cols[[nm_v]], width = 2.2, dash = if (grepl("immature", nm_v)) "dash" else "solid"), marker = list(color = cols[[nm_v]], size = 7),
+                  text = ~sprintf("%d prêts à risque", n_at_risk), hovertemplate = paste0("Cohorte ", nm_v, "<br>Mois %{x} : %{y:.1f} %<br>%{text}<extra></extra>")) }
+pv %>% layout(xaxis = ax("Mois depuis l'octroi", dtick = 6), yaxis = ax("Prêts défaillants (%)")) %>% pl()
+```
+
+Estimateur actuariel par pas de 3 mois : les prêts remboursés ou non encore observés sortent du risque, ce qui évite de comparer des cohortes d'âges différents. Courbes tronquées sous 15 prêts à risque.
+
+<details><summary>Vue tableau (accessibilité)</summary>
+
+```{r vintage_tbl}
+v %>% transmute(Cohorte = vintage, `Mois` = months_on_book, `Prêts à risque` = n_at_risk, `Défauts cumulés` = n_defaulted_cum, `Défaut cumulé (%)` = round(100 * cum_default_rate, 1)) %>% kable()
+```
+</details>
+
+## 3. Segments
+
+```{r segments, fig.height=8}
+sk <- marts$segment_kpi %>% filter(dimension %in% c("Durée", "Montant (CZK)", "Région")) %>% mutate(lab = sprintf("%d / %d", n_bad, n_loans))
+sp <- lapply(c("Durée", "Montant (CZK)", "Région"), function(dm) { s <- sk %>% filter(dimension == dm) %>% arrange(if (dm == "Durée") as.numeric(sub(" mois", "", segment)) else segment)
+  plot_ly(s, y = ~segment, x = ~100 * bad_rate, type = "bar", orientation = "h", marker = list(color = PAL[["blue"]]),
+          text = ~lab, textposition = "outside", textfont = list(color = INK), cliponaxis = FALSE, showlegend = FALSE,
+          hovertemplate = "%{y}<br>Taux de défaut : %{x:.1f} %<br>Défaillants / prêts : %{text}<extra></extra>") %>%
+    layout(yaxis = ax(dm, categoryorder = "array", categoryarray = rev(unique(s$segment))), xaxis = ax(range = c(0, 28))) })
+subplot(sp, nrows = 3, heights = c(0.27, 0.27, 0.46), titleY = TRUE, margin = 0.05) %>% pl() %>% layout(shapes = list())
+```
+
+Le montant est le segment qui sépare le plus (≥ 250 k CZK : taux de défaut le plus élevé) ; la durée discrimine peu. Régions : effectifs faibles, à lire avec prudence (un seul défaut en Bohême du Nord sur 61 prêts).
+
+## 4. Score d'octroi
+
+**Règle KO d'abord.** Un compte déjà à découvert avant l'octroi précède un défaut dans les `r sum(d$is_bad & d$ko)` cas sur `r sum(d$ko)` de la base : refus automatique, sans modèle. Le score est ajusté sur le reste (`r m$n_train` prêts d'apprentissage 1993-1996, `r m$bad_train` défauts), validé sur 1997 (`r m$n_test` prêts, `r m$bad_test` défauts), jamais vu à l'apprentissage ; tous les paramètres de prétraitement sont estimés sur l'apprentissage uniquement.
+
+```{r roc}
+rocdf <- function(r, nm) data.frame(fpr = 1 - r$specificities, tpr = r$sensitivities, model = nm)
+nm <- c(sprintf("Score (AUC %.2f)", perf$auc[1]), sprintf("Conditions du contrat seules (AUC %.2f)", perf$auc[2]))
+R <- bind_rows(rocdf(m$roc_s, nm[1]), rocdf(m$roc_c, nm[2]))
+plot_ly(R, x = ~fpr, y = ~tpr, color = ~model, colors = setNames(unname(PAL[1:2]), nm), type = "scatter", mode = "lines", line = list(shape = "hv", width = 2.5),
+        hovertemplate = "Faux positifs %{x:.2f}<br>Vrais positifs %{y:.2f}<extra></extra>") %>%
+  add_lines(x = c(0, 1), y = c(0, 1), line = list(color = GRID, width = 1), showlegend = FALSE, hoverinfo = "skip", inherit = FALSE) %>%
+  layout(xaxis = ax("Taux de faux positifs", range = c(0, 1)), yaxis = ax("Taux de vrais positifs", range = c(0, 1))) %>% pl()
+```
+
+```{r bands}
+ko_te <- m$test_full %>% filter(ko) %>% summarise(band = "KO", n = n(), n_bad = sum(is_bad), bad_rate = mean(is_bad))
+bt <- bind_rows(m$bands_te %>% select(band, n, n_bad, bad_rate), ko_te) %>% mutate(band = factor(band, levels = c(sort(setdiff(band, "KO")), "KO")))
+plot_ly(bt, x = ~band, y = ~100 * bad_rate, type = "bar", marker = list(color = PAL[["blue"]]), text = ~sprintf("%d / %d", n_bad, n), textposition = "outside", textfont = list(color = INK), cliponaxis = FALSE,
+        hovertemplate = "Bande %{x}<br>Taux de défaut : %{y:.1f} %<br>Défaillants / prêts : %{text}<extra></extra>") %>%
+  layout(xaxis = ax("B1 = moins risqué … B4 = plus risqué ; KO = découvert avant octroi"), yaxis = ax("Prêts défaillants (%)", range = c(0, 112))) %>% pl()
+```
+
+```{r coefs}
+lab_var <- c(cash_share = "Part des retraits en espèces (90 j)", log_min_balance = "Solde minimum (90 j, log)", has_disponent = "Co-titulaire / mandataire",
+             log_account_age = "Ancienneté du compte (log)", payment_to_inflow = "Mensualité / entrées mensuelles", log_n_tx = "Nombre d'opérations (90 j, log)",
+             log_avg_balance = "Solde moyen (90 j, log)", log_amount = "Montant du prêt (log)", unemployment_96_pct = "Chômage du district 1996")
+cf <- m$coefs %>% filter(abs(coef) > 0) %>% mutate(label = lab_var[variable], sens = ifelse(coef > 0, "Augmente le risque", "Diminue le risque")) %>% arrange(abs(coef))
+plot_ly(cf, y = ~label, x = ~coef, color = ~sens, colors = c("Augmente le risque" = PAL[["orange"]], "Diminue le risque" = PAL[["blue"]]), type = "bar", orientation = "h",
+        hovertemplate = "%{y}<br>Coefficient : %{x:.2f}<extra></extra>") %>%
+  layout(xaxis = ax("Coefficient (variables standardisées)"), yaxis = ax(categoryorder = "array", categoryarray = cf$label), margin = list(l = 230)) %>% pl()
+```
+
+Lecture indicative : les variables sont corrélées entre elles et le modèle est pénalisé ; les coefficients ne sont pas des effets causaux.
+
+## 5. Simulation d'une politique d'octroi (cohorte 1997)
+
+```{r policy}
+pol <- m$policy_te %>% mutate(ref = ifelse(is_reference, "Seuil de référence", "Autres seuils"))
+txt <- function(x) sprintf("Seuil de PD %.3f<br>%d acceptés ; %d défaillants refusés ; %d bons dossiers refusés<br>Perte évitée (proxy) : %s CZK", x$cutoff, x$n_approved, x$bad_refused, x$good_refused, format(round(x$loss_avoided_czk), big.mark = " "))
+oth <- pol %>% filter(!is_reference); rf <- pol %>% filter(is_reference)
+plot_ly() %>%
+  add_trace(data = pol, x = ~100 * approval_rate, y = ~100 * bad_rate_approved, type = "scatter", mode = "lines", line = list(color = GRID, width = 1.5), hoverinfo = "skip", showlegend = FALSE) %>%
+  add_trace(data = oth, x = ~100 * approval_rate, y = ~100 * bad_rate_approved, type = "scatter", mode = "markers", name = "Autres seuils", marker = list(color = PAL[["blue"]], size = 9),
+            text = txt(oth), hovertemplate = "%{text}<br>Défaut parmi les acceptés : %{y:.1f} %<extra></extra>") %>%
+  add_trace(data = rf, x = ~100 * approval_rate, y = ~100 * bad_rate_approved, type = "scatter", mode = "markers", name = "Seuil de référence", marker = list(color = PAL[["orange"]], size = 15),
+            text = txt(rf), hovertemplate = "%{text}<br>Défaut parmi les acceptés : %{y:.1f} %<extra></extra>") %>%
+  layout(xaxis = ax("Taux d'acceptation (%)"), yaxis = ax("Taux de défaut parmi les prêts acceptés (%)")) %>% pl()
+```
+
+Seuil de référence fixé **avant** de regarder 1997 (80e centile des PD de l'apprentissage) : acceptation `r fm(100 * pol_ref$approval_rate, 0)` %, taux de défaut des acceptés `r fm(100 * pol_ref$bad_rate_approved)` % (contre `r fm(100 * mean(m$test_full$is_bad))` % sans politique), `r pol_ref$bad_refused` défaillants refusés pour `r pol_ref$good_refused` bons dossiers refusés. La perte évitée est une proxy (exposition × LGD supposée). Aucun revenu n'est observé : le classeur Excel permet de saisir une marge pour obtenir un solde net.
+
+## 6. Qualité des données
+
+```{r dq}
+marts$dq_result %>% transmute(`N°` = check_id, Couche = layer, Contrôle = check_name, Gravité = severity, Testés = n_checked, `En échec` = n_failed, Statut = ifelse(passed, "OK", ifelse(severity == "error", "ÉCHEC", "À noter"))) %>% kable()
+```
+
+## 7. Limites
+
+- **Données de 1993-1998, une seule banque** : démonstrateur méthodologique, pas un modèle utilisable en production.
+- **Défaut = découvert** : peut surestimer la qualité du score par rapport à un défaut de paiement. Les 12 prêts dont le découvert précède l'octroi ont une date de défaut imputée.
+- **Petits effectifs** : 76 défauts au total, 16 en validation ; les intervalles de confiance sont larges (bootstrap stratifié, 2 000 tirages).
+- **LGD et encours** : LGD 45 % supposée (aucun recouvrement dans la base) ; encours par amortissement linéaire (aucun échéancier).
+- **Variables exclues volontairement** : genre (non-discrimination), âge (30 titulaires de 13-17 ans dans la source), ordres permanents (non datés : risque de fuite).

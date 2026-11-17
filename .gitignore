@@ -1,0 +1,5 @@
+data/*.asc
+outputs/cache/
+outputs/model_log.txt
+*.Rhistory
+.Rproj.user/

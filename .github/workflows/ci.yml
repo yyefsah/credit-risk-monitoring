@@ -1,0 +1,25 @@
+# NON TESTÉ en conditions réelles (écrit sans accès à GitHub) : à vérifier au premier push.
+name: ci
+on: { push: { branches: [main] }, pull_request: {} }
+jobs:
+  pipeline:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_USER: yacine, POSTGRES_PASSWORD: yacine, POSTGRES_DB: bankrisk }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U yacine" --health-interval 5s --health-timeout 5s --health-retries 10
+    env: { PGHOST: localhost, PGUSER: yacine, PGPASSWORD: yacine, PGDATABASE: bankrisk }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dépendances système et R
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client r-base r-cran-tidyverse r-cran-dbi r-cran-rpostgresql \
+            r-cran-glmnet r-cran-proc r-cran-openxlsx r-cran-plotly r-cran-rmarkdown r-cran-testthat r-cran-ragg pandoc
+      - name: Chaîne complète (données, SQL, modèle, sorties, tests)
+        run: ./run_all.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: outputs, path: outputs/ }

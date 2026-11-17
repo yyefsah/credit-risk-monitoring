@@ -1,0 +1,7 @@
+"table","grain","key","note"
+"fact_loan","1 ligne par prêt","loan_id","Relier à fact_portfolio_monthly par date. sample = train/test/immature ; ko = règle de refus automatique ; pd = 1 pour les prêts KO, sinon PD du modèle."
+"fact_portfolio_monthly","1 ligne par fin de mois","month_end","Encours estimé par amortissement linéaire ; coût du risque avec LGD de la table assumption."
+"fact_vintage","1 ligne par cohorte et pas de 3 mois","vintage_year + months_on_book","Estimateur actuariel du défaut cumulé."
+"dim_segment_kpi","1 ligne par segment","dimension + segment","Taux de défaut et montants par segment (GROUPING via ROLLUP)."
+"dq_result","1 ligne par contrôle","check_id","Résultats des contrôles qualité SQL."
+"assumption","1 ligne par hypothèse","key","Hypothèses modifiables (LGD...)."

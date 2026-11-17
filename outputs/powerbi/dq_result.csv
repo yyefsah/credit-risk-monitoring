@@ -1,0 +1,22 @@
+"check_id","layer","check_name","description","severity","n_checked","n_failed","passed"
+1,"staging","rowcount_loan","Lignes brut = typé (loan)","error",682,0,TRUE
+2,"staging","rowcount_trans","Lignes brut = typé (trans)","error",1056320,0,TRUE
+3,"staging","rowcount_account","Lignes brut = typé (account)","error",4500,0,TRUE
+4,"staging","rowcount_client","Lignes brut = typé (client)","error",5369,0,TRUE
+5,"staging","loan_one_per_account","Un seul prêt par compte","error",682,0,TRUE
+6,"staging","loan_payment_x_duration","mensualité x durée = montant (tolérance d'arrondi)","error",682,0,TRUE
+7,"staging","loan_after_account_open","Prêt octroyé après l'ouverture du compte","error",682,0,TRUE
+8,"staging","account_one_owner","Chaque compte a exactement un titulaire (OWNER)","error",4500,0,TRUE
+9,"staging","client_age_plausible","Âge du titulaire à l'octroi entre 18 et 100 ans (30 titulaires de 13-17 ans dans la source : conservés, signalés)","warning",682,30,FALSE
+10,"staging","trans_dates_in_range","Transactions entre 1993-01-01 et 1998-12-31","error",1056320,0,TRUE
+11,"staging","balance_reconciliation_daily","Un solde enregistré chaque jour égale le cumul des mouvements (écart <= 5 CZK, arrondis d'intérêts)","error",814768,0,TRUE
+12,"staging","district_missing_unemployment_95","Districts sans taux de chômage 1995 (valeur ""?"" dans la source)","info",77,1,FALSE
+13,"marts","label_equals_ever_overdrawn","is_bad <=> solde négatif au moins une fois sur le compte","error",682,0,TRUE
+14,"marts","default_date_imputed","Prêts défaillants dont la date de défaut est imputée (découvert uniquement avant octroi)","warning",76,12,FALSE
+15,"marts","loan_base_grain","mart.loan_base : une ligne par prêt","error",682,0,TRUE
+16,"marts","vintage_consistency","Cohortes : taux dans [0,1], croissants avec l'ancienneté, n_at_risk au mois 0 = prêts de la cohorte","error",86,0,TRUE
+17,"marts","vintage_defaults_match","Défauts cumulés de la cohorte (dernier pas) = défauts observés du portefeuille","error",76,0,TRUE
+18,"marts","npl_ratio_bounds","Taux d'encours défaillant dans [0,1]","error",72,0,TRUE
+19,"marts","segment_totals","Somme des segments d'une dimension = total prêts","error",682,0,TRUE
+20,"marts","no_leakage_features_window","Dernière transaction utilisée par les variables < date d'octroi","error",682,0,TRUE
+21,"marts","features_no_null","Variables du modèle sans valeur manquante (hors part des retraits et soldes 90j si aucune opération)","warning",682,3,FALSE
